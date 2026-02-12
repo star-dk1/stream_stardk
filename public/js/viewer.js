@@ -343,14 +343,30 @@
 
             remoteVideo.srcObject = remoteStream;
 
+            // DEBUG: Enable controls to see timeline/buffering
+            remoteVideo.controls = true;
+
             // Video starts muted (autoplay OK), show unmute button
             remoteVideo.muted = true;
             isMuted = true;
+
+            // Debugging events
+            remoteVideo.onloadedmetadata = () => {
+                console.log(`[VIDEO] Metadata loaded. Size: ${remoteVideo.videoWidth}x${remoteVideo.videoHeight}`);
+                showToast(`Video recibido: ${remoteVideo.videoWidth}x${remoteVideo.videoHeight}`);
+            };
+
+            remoteVideo.onresize = () => {
+                console.log(`[VIDEO] Resized to: ${remoteVideo.videoWidth}x${remoteVideo.videoHeight}`);
+            };
 
             remoteVideo.play()
                 .then(() => {
                     console.log('[VIDEO] Playing successfully (muted)');
                     videoOverlay.classList.add('hidden');
+                    // Ensure overlay is really gone
+                    videoOverlay.style.display = 'none';
+
                     videoControls.style.display = 'flex';
                     btnUnmute.style.display = 'flex';
                     btnMuteToggle.style.display = 'inline-flex';
@@ -360,6 +376,8 @@
                 .catch(e => {
                     console.warn('[VIDEO] Autoplay failed even muted:', e);
                     // Last resort: show a click-to-play overlay
+                    videoOverlay.style.display = 'flex'; // Ensure visible for click
+                    videoOverlay.classList.remove('hidden');
                     videoOverlay.innerHTML = `
             <div class="offline-icon" style="cursor:pointer;" id="click-to-play">▶️</div>
             <div class="offline-text">Haz clic para ver el stream</div>
@@ -367,6 +385,7 @@
                     document.getElementById('click-to-play').addEventListener('click', () => {
                         remoteVideo.play();
                         videoOverlay.classList.add('hidden');
+                        videoOverlay.style.display = 'none';
                         videoControls.style.display = 'flex';
                     });
                 });
