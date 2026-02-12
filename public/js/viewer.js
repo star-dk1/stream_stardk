@@ -402,16 +402,41 @@
         });
     }
 
-    // ── Create dummy stream (canvas only, no AudioContext) ─────
+    // ── Create dummy stream (Canvas + Silent Audio) ────────────
     function createDummyStream() {
-        // Simple canvas stream — no AudioContext needed, avoids suspension
+        // 1. Canvas Video Track (keep it black/small)
         const canvas = document.createElement('canvas');
         canvas.width = 10;
         canvas.height = 10;
         const ctx = canvas.getContext('2d');
         ctx.fillStyle = '#000';
         ctx.fillRect(0, 0, 10, 10);
-        return canvas.captureStream(10); // 10 FPS
+        const stream = canvas.captureStream(10); // 10 FPS
+
+        // 2. Silent Audio Track (Forces SDP to include audio m-line)
+        try {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (AudioContext) {
+                const audioCtx = new AudioContext();
+                const oscillator = audioCtx.createOscillator();
+                const dest = audioCtx.createMediaStreamDestination();
+
+                oscillator.connect(dest);
+                // Zero frequency or gain 0 doesn't matter much if it's dummy, 
+                // but let's keep it standard. Valid track is what matters.
+                oscillator.start();
+
+                const audioTrack = dest.stream.getAudioTracks()[0];
+                if (audioTrack) {
+                    stream.addTrack(audioTrack);
+                    console.log('[DUMMY] Added silent audio track for negotiation');
+                }
+            }
+        } catch (e) {
+            console.warn('[DUMMY] Could not create dummy audio track:', e);
+        }
+
+        return stream;
     }
 
     // Helper to update overlay text without replacing the whole HTML structure if possible
