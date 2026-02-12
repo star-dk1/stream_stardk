@@ -239,34 +239,58 @@
         });
     }
 
+    // ── Helper: Replace tracks in active calls ─────────────────
+    function updateActiveStreamTracks(newStream) {
+        if (!newStream) return;
+
+        const newVideoTrack = newStream.getVideoTracks()[0];
+        const newAudioTrack = newStream.getAudioTracks()[0];
+
+        activePeerCalls.forEach((call, peerId) => {
+            const senders = call.peerConnection.getSenders();
+
+            senders.forEach((sender) => {
+                if (sender.track) {
+                    if (sender.track.kind === 'video' && newVideoTrack) {
+                        sender.replaceTrack(newVideoTrack).catch(e => console.error('Replace Video Track Error:', e));
+                    }
+                    if (sender.track.kind === 'audio' && newAudioTrack) {
+                        sender.replaceTrack(newAudioTrack).catch(e => console.error('Replace Audio Track Error:', e));
+                    }
+                }
+            });
+        });
+    }
+
     // ── Source Tab Switching ───────────────────────────────────
     sourceTabs.forEach((tab) => {
-        tab.addEventListener('click', () => {
-            if (isStreaming) {
-                showToast('Detén el stream antes de cambiar la fuente', 'error');
-                return;
-            }
+        // ── Source Tab Switching ───────────────────────────────────
+        sourceTabs.forEach((tab) => {
+            tab.addEventListener('click', () => {
+                const source = tab.dataset.source;
+                currentSource = source;
 
-            const source = tab.dataset.source;
-            currentSource = source;
+                // Update tabs
+                sourceTabs.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
 
-            // Update tabs
-            sourceTabs.forEach(t => t.classList.remove('active'));
-            tab.classList.add('active');
+                // Update panels
+                panelCamera.classList.remove('active');
+                panelScreen.classList.remove('active');
+                panelVideo.classList.remove('active');
 
-            // Update panels
-            panelCamera.classList.remove('active');
-            panelScreen.classList.remove('active');
-            panelVideo.classList.remove('active');
+                if (source === 'camera') panelCamera.classList.add('active');
+                if (source === 'screen') panelScreen.classList.add('active');
+                if (source === 'video') panelVideo.classList.add('active');
 
-            if (source === 'camera') panelCamera.classList.add('active');
-            if (source === 'screen') panelScreen.classList.add('active');
-            if (source === 'video') panelVideo.classList.add('active');
-
-            // Reset preview
-            stopCurrentStream();
-            previewPlaceholder.style.display = 'flex';
-            btnStartStream.disabled = true;
+                // If NOT streaming, reset preview to let user choose clean
+                if (!isStreaming) {
+                    stopCurrentStream();
+                    previewPlaceholder.style.display = 'flex';
+                    btnStartStream.disabled = true;
+                }
+                // If streaming, we leave the current stream active until they select a new one
+            });
         });
     });
 
@@ -296,7 +320,13 @@
 
     btnGetCamera.addEventListener('click', async () => {
         try {
-            stopCurrentStream();
+            // If streaming, don't stop everything yet, just prepare new stream
+            const wasStreaming = isStreaming;
+            if (!wasStreaming) {
+                stopCurrentStream();
+            } else {
+                cleanupPreviousResources();
+            }
 
             const constraints = {
                 video: cameraSelect.value
@@ -305,10 +335,25 @@
                 audio: true,
             };
 
-            activeStream = await navigator.mediaDevices.getUserMedia(constraints);
+            const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+            if (wasStreaming) {
+                // Stop OLD tracks (except we just got new ones, be careful not to stop new ones)
+                // Actually, stopCurrentStream stops activeStream. 
+                // So we should safe-keep newStream, stop old activeStream, then assign new.
+                if (activeStream) activeStream.getTracks().forEach(t => t.stop());
+            }
+
+            activeStream = newStream;
             setPreview(activeStream);
             btnStartStream.disabled = false;
-            showToast('📷 Cámara activada', 'success');
+
+            if (wasStreaming) {
+                updateActiveStreamTracks(activeStream);
+                showToast('📷 Cámara activada (En vivo)', 'success');
+            } else {
+                showToast('📷 Cámara activada', 'success');
+            }
         } catch (err) {
             console.error('Camera error:', err);
             showToast('Error al acceder a la cámara: ' + err.message, 'error');
@@ -321,15 +366,20 @@
 
     btnGetScreen.addEventListener('click', async () => {
         try {
-            stopCurrentStream();
+            const wasStreaming = isStreaming;
+            if (!wasStreaming) {
+                stopCurrentStream();
+            } else {
+                cleanupPreviousResources();
+            }
 
-            activeStream = await navigator.mediaDevices.getDisplayMedia({
+            const newStream = await navigator.mediaDevices.getDisplayMedia({
                 video: { cursor: 'always', width: { ideal: 1920 }, height: { ideal: 1080 } },
                 audio: true,
             });
 
             // Handle browser's native stop sharing button
-            activeStream.getVideoTracks()[0].addEventListener('ended', () => {
+            newStream.getVideoTracks()[0].addEventListener('ended', () => {
                 console.log('[SCREEN] User stopped sharing');
                 if (isStreaming) {
                     stopStream();
@@ -340,9 +390,20 @@
                 }
             });
 
+            if (wasStreaming) {
+                if (activeStream) activeStream.getTracks().forEach(t => t.stop());
+            }
+
+            activeStream = newStream;
             setPreview(activeStream);
             btnStartStream.disabled = false;
-            showToast('🖥️ Pantalla compartida', 'success');
+
+            if (wasStreaming) {
+                updateActiveStreamTracks(activeStream);
+                showToast('🖥️ Pantalla compartida (En vivo)', 'success');
+            } else {
+                showToast('🖥️ Pantalla compartida', 'success');
+            }
         } catch (err) {
             console.error('Screen share error:', err);
             if (err.name !== 'NotAllowedError') {
@@ -360,12 +421,25 @@
         if (!file) return;
 
         videoFilename.textContent = file.name;
-        stopCurrentStream();
+
+        const wasStreaming = isStreaming;
+        if (!wasStreaming) {
+            stopCurrentStream();
+        } else {
+            cleanupPreviousResources();
+        }
+        // If streaming, we must stop the OLD stream tracks but KEEP the socket/peer connection alive
+        if (wasStreaming && activeStream) {
+            activeStream.getTracks().forEach(t => t.stop());
+            // Note: We don't nullify activeStream yet, wait for new one
+        }
 
         try {
             const url = URL.createObjectURL(file);
             mp4SourceVideo.src = url;
             mp4SourceVideo.loop = true;
+            // Ensure volume is 1
+            mp4SourceVideo.volume = 1.0;
 
             await new Promise((resolve, reject) => {
                 mp4SourceVideo.onloadedmetadata = resolve;
@@ -384,6 +458,7 @@
 
             // Draw video frames to canvas
             function drawFrame() {
+                // If video element is still the same simply loop
                 if (mp4SourceVideo.paused || mp4SourceVideo.ended) return;
                 ctx2d.drawImage(mp4SourceVideo, 0, 0, mp4Canvas.width, mp4Canvas.height);
                 mp4AnimFrame = requestAnimationFrame(drawFrame);
@@ -397,6 +472,11 @@
             source.connect(dest);
             source.connect(mp4AudioCtx.destination); // Also hear locally
 
+            // Resume context immediately (fixes audio issues)
+            if (mp4AudioCtx.state === 'suspended') {
+                await mp4AudioCtx.resume();
+            }
+
             // ── Combine video + audio into one stream ──
             const combinedStream = new MediaStream();
             canvasStream.getVideoTracks().forEach(t => combinedStream.addTrack(t));
@@ -405,7 +485,13 @@
             activeStream = combinedStream;
             setPreview(activeStream);
             btnStartStream.disabled = false;
-            showToast('🎬 Video cargado: ' + file.name, 'success');
+
+            if (wasStreaming) {
+                updateActiveStreamTracks(activeStream);
+                showToast('🎬 Video cargado (En vivo)', 'success');
+            } else {
+                showToast('🎬 Video cargado: ' + file.name, 'success');
+            }
         } catch (err) {
             console.error('MP4 error:', err);
             showToast('Error al cargar video: ' + err.message, 'error');
@@ -501,15 +587,8 @@
         previewPlaceholder.style.display = 'none';
     }
 
-    function stopCurrentStream() {
-        if (activeStream) {
-            activeStream.getTracks().forEach(t => t.stop());
-            activeStream = null;
-        }
-
-        previewVideo.srcObject = null;
-
-        // Stop MP4 mode
+    function cleanupPreviousResources() {
+        // Stop MP4 mode resources
         if (mp4AnimFrame) {
             cancelAnimationFrame(mp4AnimFrame);
             mp4AnimFrame = null;
@@ -520,6 +599,16 @@
         }
         mp4SourceVideo.pause();
         mp4SourceVideo.src = '';
+    }
+
+    function stopCurrentStream() {
+        if (activeStream) {
+            activeStream.getTracks().forEach(t => t.stop());
+            activeStream = null;
+        }
+
+        previewVideo.srcObject = null;
+        cleanupPreviousResources();
     }
 
     // ── Chat ───────────────────────────────────────────────────
