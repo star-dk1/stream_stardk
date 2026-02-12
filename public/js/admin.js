@@ -352,12 +352,20 @@
                 video: cameraSelect.value
                     ? { deviceId: { exact: cameraSelect.value }, width: { ideal: 1280 }, height: { ideal: 720 } }
                     : { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-                audio: micSelect.value
-                    ? { deviceId: { exact: micSelect.value } }
-                    : true,
+                // Simply prefer the selected mic, but don't fail if exact ID is weird
+                audio: micSelect.value ? { deviceId: micSelect.value } : true,
             };
 
             const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+            // Log audio track details for debugging
+            const audioTrack = newStream.getAudioTracks()[0];
+            if (audioTrack) {
+                console.log('[AUDIO] Track enabled:', audioTrack.enabled, 'Muted:', audioTrack.muted, 'Label:', audioTrack.label);
+            } else {
+                console.warn('[AUDIO] No audio track found!');
+                showToast('⚠️ No se detectó audio en la cámara', 'warning');
+            }
 
             if (wasStreaming) {
                 // Stop OLD tracks (except we just got new ones, be careful not to stop new ones)
@@ -719,54 +727,73 @@
     });
 
     function initVolumeMeter(stream) {
-        // Ensure AudioContext
-        if (!audioContext) {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-
-        // Resume if suspended
-        if (audioContext.state === 'suspended') {
-            audioContext.resume();
-        }
-
-        // Close old microphone stream if exists to avoid leak
-        if (microphone) {
-            // disconnect? usually simple GC handles it if we overwrite, but explicit disconnect is good
-            // microphone.disconnect(); 
-        }
-
-        microphone = audioContext.createMediaStreamSource(stream);
-        analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256;
-        microphone.connect(analyser);
-
-        const bufferLength = analyser.frequencyBinCount;
-        const dataArray = new Uint8Array(bufferLength);
-
-        if (volumeInterval) clearInterval(volumeInterval);
-
-        volumeInterval = setInterval(() => {
-            analyser.getByteFrequencyData(dataArray);
-
-            // Calculate average volume
-            let sum = 0;
-            for (let i = 0; i < bufferLength; i++) {
-                sum += dataArray[i];
+        try {
+            // Ensure AudioContext
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
             }
-            let average = sum / bufferLength;
 
-            // Scale to 0-100%
-            // Average usually 0-128 range roughly, but can be up to 255
-            let level = Math.min(100, (average / 128) * 100 * 2); // Amplified a bit
+            // Resume if suspended
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
 
-            volumeBar.style.width = `${level}%`;
+            // Close old microphone stream if exists to avoid leak
+            if (microphone) {
+                // disconnect? usually simple GC handles it if we overwrite, but explicit disconnect is good
+                // microphone.disconnect(); 
+            }
 
-            // Color feedback
-            if (level > 80) volumeBar.style.backgroundColor = 'red';
-            else if (level > 50) volumeBar.style.backgroundColor = 'yellow';
-            else volumeBar.style.backgroundColor = 'lime';
+            // Check if stream has audio tracks
+            const audioTracks = stream.getAudioTracks();
+            if (audioTracks.length === 0) {
+                console.warn('[VOL] Stream has no audio tracks.');
+                return;
+            }
 
-        }, 100);
+            if (!audioTracks[0].enabled) {
+                console.warn('[VOL] Audio track is disabled/muted!');
+                showToast('⚠️ Tu micrófono está silenciado o deshabilitado', 'warning');
+            }
+
+            microphone = audioContext.createMediaStreamSource(stream);
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+            microphone.connect(analyser);
+
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+
+            if (volumeInterval) clearInterval(volumeInterval);
+
+            volumeInterval = setInterval(() => {
+                try {
+                    analyser.getByteFrequencyData(dataArray);
+
+                    // Calculate average volume
+                    let sum = 0;
+                    for (let i = 0; i < bufferLength; i++) {
+                        sum += dataArray[i];
+                    }
+                    let average = sum / bufferLength;
+
+                    // Scale to 0-100%
+                    let level = Math.min(100, (average / 128) * 100 * 2);
+
+                    volumeBar.style.width = `${level}%`;
+
+                    // Color feedback
+                    if (level > 80) volumeBar.style.backgroundColor = 'red';
+                    else if (level > 50) volumeBar.style.backgroundColor = 'yellow';
+                    else volumeBar.style.backgroundColor = 'lime';
+                } catch (e) {
+                    // Ignore interval errors e.g. if context closed
+                }
+
+            }, 100);
+        } catch (e) {
+            console.error('Volume Meter Error:', e);
+        }
     }
 
     // ── Utilities ──────────────────────────────────────────────

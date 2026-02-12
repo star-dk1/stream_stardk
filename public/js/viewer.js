@@ -247,15 +247,10 @@
             if (err.type === 'peer-unavailable') {
                 console.log('[PEER] Streamer unavailable, retrying...');
                 updateVideoOverlay('Buscando al streamer...');
-            } else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error') {
+            } else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'negotiation-failed') {
                 updateVideoOverlay('Reconectando al servidor...');
-                // Reinitialize peer on network errors
-                setTimeout(() => {
-                    if (peer && !peer.destroyed) {
-                        peer.destroy();
-                    }
-                    initPeer();
-                }, 3000);
+                // Hard reset for critical errors
+                hardResetPeer();
             }
         });
 
@@ -278,15 +273,31 @@
     }
 
     // ── Try connect (waits for peer if needed) ─────────────────
+    let connectionDebounce = null;
     function tryConnectToPeer(adminPeerId) {
-        if (peerReady) {
-            connectToPeer(adminPeerId);
-        } else {
-            console.log('[PEER] Not ready yet, queuing connection to:', adminPeerId);
-            updateVideoOverlay('Esperando conexión P2P...');
-            pendingAdminPeerId = adminPeerId;
-        }
+        if (connectionDebounce) clearTimeout(connectionDebounce);
+
+        connectionDebounce = setTimeout(() => {
+            if (peerReady) {
+                connectToPeer(adminPeerId);
+            } else {
+                console.log('[PEER] Not ready yet, queuing connection to:', adminPeerId);
+                updateVideoOverlay('Esperando conexión P2P...');
+                pendingAdminPeerId = adminPeerId;
+            }
+        }, 500);
     }
+
+    function hardResetPeer() {
+        console.warn('[PEER] Performing HARD RESET...');
+        if (peer && !peer.destroyed) {
+            peer.destroy();
+        }
+        peer = null;
+        peerReady = false;
+        setTimeout(initPeer, 1000);
+    }
+
 
     // ── Connect to admin peer ─────────────────────────────────
     function connectToPeer(adminPeerId) {
