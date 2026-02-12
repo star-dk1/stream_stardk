@@ -23,6 +23,17 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ─── Socket.IO ─────────────────────────────────────────────────
+const io = new Server(server, {
+    cors: {
+        origin: '*',
+        methods: ['GET', 'POST'],
+    },
+    transports: ['polling', 'websocket'], // Default order, robust
+    pingTimeout: 60000,
+    pingInterval: 25000,
+});
+
 // ─── PeerJS Server ─────────────────────────────────────────────
 const peerServer = ExpressPeerServer(server, {
     debug: true,
@@ -31,8 +42,6 @@ const peerServer = ExpressPeerServer(server, {
     proxied: true, // Required for Render/Heroku behind proxy
 });
 app.use('/peerjs', peerServer);
-
-// ─── In-Memory Store ───────────────────────────────────────────
 const admins = new Map(); // username -> { id, username, passwordHash }
 let streamState = {
     isLive: false,
@@ -168,14 +177,7 @@ app.get('/api/stream-status', (req, res) => {
 });
 
 // ─── Socket.IO ─────────────────────────────────────────────────
-const io = new Server(server, {
-    cors: {
-        origin: '*',
-        methods: ['GET', 'POST'],
-    },
-    pingTimeout: 60000,
-    pingInterval: 25000,
-});
+// (Server initialized above to avoid PeerJS conflict)
 
 io.on('connection', (socket) => {
     console.log(`[SOCKET] Conectado: ${socket.id}`);

@@ -98,7 +98,6 @@
     // ── Socket.IO ──────────────────────────────────────────────
     function initSocket() {
         socket = io({
-            transports: ['websocket', 'polling'],
             reconnectionAttempts: Infinity,
             reconnectionDelay: 1000,
             reconnectionDelayMax: 5000,
