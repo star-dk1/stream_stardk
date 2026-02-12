@@ -202,6 +202,7 @@
     // ── PeerJS ─────────────────────────────────────────────────
     function initPeer() {
         console.log('[PEER] Initializing PeerJS...');
+        updateVideoOverlay('Inicializando conexión P2P...');
 
         // FIXED: Don't specify port explicitly — let PeerJS use the default
         // On Render (HTTPS/443) or localhost, this auto-resolves correctly
@@ -215,6 +216,9 @@
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
                     { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:stun2.l.google.com:19302' },
+                    { urls: 'stun:stun3.l.google.com:19302' },
+                    { urls: 'stun:stun4.l.google.com:19302' },
                 ],
             },
         };
@@ -225,6 +229,7 @@
         peer.on('open', (id) => {
             console.log('[PEER] My ID:', id);
             peerReady = true;
+            updateVideoOverlay('Conectado al servidor de señalización.');
 
             // If we received a stream-started event before peer was ready, connect now
             if (pendingAdminPeerId) {
@@ -237,11 +242,13 @@
         peer.on('error', (err) => {
             console.error('[PEER] Error:', err.type, err);
             peerReady = false;
+            updateVideoOverlay(`Error de conexión: ${err.type}`);
 
             if (err.type === 'peer-unavailable') {
-                // Streamer might have disconnected or ID is wrong
                 console.log('[PEER] Streamer unavailable, retrying...');
+                updateVideoOverlay('Buscando al streamer...');
             } else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error') {
+                updateVideoOverlay('Reconectando al servidor...');
                 // Reinitialize peer on network errors
                 setTimeout(() => {
                     if (peer && !peer.destroyed) {
@@ -256,6 +263,7 @@
         peer.on('disconnected', () => {
             console.log('[PEER] Disconnected, reconnecting...');
             peerReady = false;
+            updateVideoOverlay('Reconectando...');
             setTimeout(() => {
                 if (peer && !peer.destroyed) {
                     peer.reconnect();
@@ -275,6 +283,7 @@
             connectToPeer(adminPeerId);
         } else {
             console.log('[PEER] Not ready yet, queuing connection to:', adminPeerId);
+            updateVideoOverlay('Esperando conexión P2P...');
             pendingAdminPeerId = adminPeerId;
         }
     }
@@ -301,6 +310,7 @@
         }
 
         console.log('[PEER] Calling admin:', adminPeerId);
+        updateVideoOverlay('Solicitando stream de video...');
 
         // FIXED: Use a minimal canvas-only dummy stream (no AudioContext needed)
         // This avoids AudioContext suspension issues in browsers
@@ -309,6 +319,7 @@
 
         if (!call) {
             console.error('[PEER] Call returned null, retrying in 3s...');
+            updateVideoOverlay('Error al llamar, reintentando...');
             setTimeout(() => connectToPeer(adminPeerId), 3000);
             return;
         }
@@ -317,6 +328,7 @@
 
         call.on('stream', (remoteStream) => {
             console.log('[PEER] ✅ Receiving stream!', remoteStream.getTracks().map(t => t.kind + ':' + t.readyState));
+            updateVideoOverlay('¡Recibiendo video!');
 
             remoteVideo.srcObject = remoteStream;
 
@@ -363,6 +375,7 @@
 
         call.on('error', (err) => {
             console.error('[PEER] Call error:', err);
+            updateVideoOverlay('Error en la llamada: ' + err.type);
             currentCall = null;
             // Retry connection
             setTimeout(() => {
@@ -382,12 +395,21 @@
     function createDummyStream() {
         // Simple canvas stream — no AudioContext needed, avoids suspension
         const canvas = document.createElement('canvas');
-        canvas.width = 2;
-        canvas.height = 2;
+        canvas.width = 10;
+        canvas.height = 10;
         const ctx = canvas.getContext('2d');
         ctx.fillStyle = '#000';
-        ctx.fillRect(0, 0, 2, 2);
-        return canvas.captureStream(1);
+        ctx.fillRect(0, 0, 10, 10);
+        return canvas.captureStream(10); // 10 FPS
+    }
+
+    // Helper to update overlay text without replacing the whole HTML structure if possible
+    function updateVideoOverlay(text) {
+        // Only update the subtext part if overlay is visible
+        if (!videoOverlay.classList.contains('hidden')) {
+            const subtext = videoOverlay.querySelector('.offline-subtext');
+            if (subtext) subtext.textContent = text;
+        }
     }
 
     // ── Chat ───────────────────────────────────────────────────
