@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description"
+        content="Plataforma de streaming en vivo — Transmite video, cámara y pantalla en tiempo real">
+    <title>StreamVibe — Live Streaming</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+</head>
+
+<body>
+    <div class="bg-animated">
+        <div class="bg-blob-3"></div>
+    </div>
+
+    <div class="landing-page">
+        <div class="landing-container">
+            <!-- Header -->
+            <div class="landing-header">
+                <span class="landing-icon">🎬</span>
+                <h1 class="text-gradient">StreamVibe</h1>
+                <p>Plataforma de Streaming en Vivo</p>
+            </div>
+
+            <!-- Auth Card -->
+            <div class="glass-card auth-card">
+                <!-- Tabs -->
+                <div class="auth-tabs">
+                    <button class="auth-tab active" data-tab="login" id="tab-login">Iniciar Sesión</button>
+                    <button class="auth-tab" data-tab="register" id="tab-register">Registrarse</button>
+                </div>
+
+                <!-- Alert -->
+                <div class="alert alert-error" id="auth-alert"></div>
+                <div class="alert alert-success" id="auth-success"></div>
+
+                <!-- Login Form -->
+                <form class="auth-form" id="login-form">
+                    <div class="input-group">
+                        <label for="login-username">Usuario</label>
+                        <input type="text" class="input" id="login-username" placeholder="Tu nombre de usuario"
+                            autocomplete="username" required>
+                    </div>
+                    <div class="input-group">
+                        <label for="login-password">Contraseña</label>
+                        <input type="password" class="input" id="login-password" placeholder="Tu contraseña"
+                            autocomplete="current-password" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-lg" id="login-btn">
+                        Entrar al Panel Admin
+                    </button>
+                </form>
+
+                <!-- Register Form -->
+                <form class="auth-form" id="register-form" style="display:none;">
+                    <div class="input-group">
+                        <label for="reg-username">Usuario</label>
+                        <input type="text" class="input" id="reg-username" placeholder="Elige un nombre de usuario"
+                            autocomplete="username" required minlength="3" maxlength="20">
+                    </div>
+                    <div class="input-group">
+                        <label for="reg-password">Contraseña</label>
+                        <input type="password" class="input" id="reg-password" placeholder="Mínimo 6 caracteres"
+                            autocomplete="new-password" required minlength="6">
+                    </div>
+                    <div class="input-group">
+                        <label for="reg-secret">Código de Admin</label>
+                        <input type="password" class="input" id="reg-secret"
+                            placeholder="Código secreto de administrador" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-lg" id="register-btn">
+                        Crear Cuenta Admin
+                    </button>
+                </form>
+
+                <!-- Divider -->
+                <div class="auth-divider">o</div>
+
+                <!-- Viewer link -->
+                <div class="viewer-link">
+                    <a href="/viewer.html" class="btn btn-ghost btn-lg">
+                        📺 Entrar como Espectador
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/auth.js"></script>
+</body>
+
+</html>

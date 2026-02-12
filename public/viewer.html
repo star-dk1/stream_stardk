@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="StreamVibe — Mira la transmisión en vivo">
+    <title>StreamVibe — Viewer</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📺</text></svg>">
+</head>
+
+<body class="viewer-page">
+    <div class="bg-animated">
+        <div class="bg-blob-3"></div>
+    </div>
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- Username Modal -->
+    <div class="modal-overlay" id="username-modal">
+        <div class="glass-card modal">
+            <h2>👋 ¡Bienvenido!</h2>
+            <p>Elige un nombre para el chat en vivo</p>
+            <form id="username-form">
+                <div class="input-group">
+                    <input type="text" class="input" id="viewer-username" placeholder="Tu nombre..." maxlength="20"
+                        required autofocus>
+                </div>
+                <button type="submit" class="btn btn-primary">Unirse al Stream</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="navbar-content">
+            <a href="/" class="navbar-brand">
+                <span class="navbar-logo">🎬 StreamVibe</span>
+            </a>
+            <div class="navbar-actions">
+                <div id="stream-badge" class="offline-badge">
+                    <span>OFFLINE</span>
+                </div>
+                <div class="viewer-count" id="viewer-counter">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    </svg>
+                    <span id="viewer-count-num">0</span>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="viewer-main">
+        <!-- Video Section -->
+        <div class="video-section">
+            <div class="video-container">
+                <video id="remote-video" autoplay playsinline></video>
+                <div class="video-overlay" id="video-overlay">
+                    <div class="offline-icon">📡</div>
+                    <div class="offline-text">Stream Offline</div>
+                    <div class="offline-subtext">Esperando a que el administrador inicie la transmisión...</div>
+                    <div class="spinner" style="margin-top:20px; opacity:0.3;"></div>
+                </div>
+            </div>
+            <div class="video-info-bar">
+                <div class="stream-title" id="stream-title">Esperando stream...</div>
+                <div class="stream-meta">
+                    <div id="stream-badge-2" class="offline-badge">
+                        <span>OFFLINE</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat Sidebar -->
+        <aside class="chat-sidebar">
+            <div class="chat-header">
+                <h3>💬 Chat en Vivo</h3>
+                <div class="viewer-count" id="chat-viewer-count">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                    </svg>
+                    <span id="chat-count-num">0</span>
+                </div>
+            </div>
+            <div class="chat-messages" id="chat-messages"></div>
+            <div class="chat-input-area">
+                <input type="text" class="input" id="chat-input" placeholder="Escribe un mensaje..." maxlength="500"
+                    disabled>
+                <button class="btn btn-primary btn-sm" id="chat-send" disabled>Enviar</button>
+            </div>
+        </aside>
+    </main>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script src="/js/viewer.js"></script>
+</body>
+
+</html>
