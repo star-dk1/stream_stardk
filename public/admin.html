@@ -77,13 +77,26 @@
                 </div>
             </div>
 
-            <!-- Camera Panel -->
             <div class="source-panel active" id="panel-camera">
-                <div class="controls-row">
+                <div class="controls-row" style="flex-wrap: wrap; gap: 10px;">
                     <button class="btn btn-ghost" id="btn-get-camera">📷 Activar Cámara</button>
-                    <select class="input" id="camera-select" style="max-width:250px;">
-                        <option value="">Seleccionar cámara...</option>
-                    </select>
+                    
+                    <div style="display:flex; flex-direction:column; gap:5px;">
+                        <select class="input" id="camera-select" style="max-width:250px;">
+                            <option value="">Seleccionar cámara...</option>
+                        </select>
+                        <select class="input" id="mic-select" style="max-width:250px;">
+                            <option value="">Seleccionar micrófono...</option>
+                        </select>
+                    </div>
+
+                    <!-- Volume Meter -->
+                    <div class="volume-meter-container" style="display:flex; align-items:center; gap:5px;">
+                         <span style="font-size:12px;">🎤</span>
+                         <div style="width: 100px; height: 10px; background: #333; border-radius: 5px; overflow: hidden;">
+                             <div id="volume-bar" style="width: 0%; height: 100%; background: lime; transition: width 0.1s;"></div>
+                         </div>
+                    </div>
                 </div>
             </div>
 

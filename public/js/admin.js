@@ -47,6 +47,12 @@
     // Camera
     const btnGetCamera = document.getElementById('btn-get-camera');
     const cameraSelect = document.getElementById('camera-select');
+    const micSelect = document.getElementById('mic-select');
+    const volumeBar = document.getElementById('volume-bar');
+    let volumeInterval = null;
+    let audioContext = null;
+    let analyser = null;
+    let microphone = null;
 
     // Screen
     const btnGetScreen = document.getElementById('btn-get-screen');
@@ -88,7 +94,8 @@
             loadingOverlay.style.display = 'none';
             initSocket();
             initPeer();
-            loadCameraDevices();
+            initPeer();
+            loadMediaDevices();
         } catch (err) {
             console.error('Auth check failed:', err);
             window.location.href = '/';
@@ -298,14 +305,16 @@
     //  CAMERA MODE
     // ═══════════════════════════════════════════════════════════
 
-    async function loadCameraDevices() {
+    async function loadMediaDevices() {
         try {
+            // Request permission first to get labels
             const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             tempStream.getTracks().forEach(t => t.stop());
 
             const devices = await navigator.mediaDevices.enumerateDevices();
-            const videoDevices = devices.filter(d => d.kind === 'videoinput');
 
+            // Cameras
+            const videoDevices = devices.filter(d => d.kind === 'videoinput');
             cameraSelect.innerHTML = '<option value="">Seleccionar cámara...</option>';
             videoDevices.forEach((device, i) => {
                 const option = document.createElement('option');
@@ -313,6 +322,17 @@
                 option.textContent = device.label || `Cámara ${i + 1}`;
                 cameraSelect.appendChild(option);
             });
+
+            // Microphones
+            const audioDevices = devices.filter(d => d.kind === 'audioinput');
+            micSelect.innerHTML = '<option value="">Seleccionar micrófono...</option>';
+            audioDevices.forEach((device, i) => {
+                const option = document.createElement('option');
+                option.value = device.deviceId;
+                option.textContent = device.label || `Micrófono ${i + 1}`;
+                micSelect.appendChild(option);
+            });
+
         } catch (err) {
             console.warn('Could not enumerate devices:', err);
         }
@@ -332,7 +352,9 @@
                 video: cameraSelect.value
                     ? { deviceId: { exact: cameraSelect.value }, width: { ideal: 1280 }, height: { ideal: 720 } }
                     : { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-                audio: true,
+                audio: micSelect.value
+                    ? { deviceId: { exact: micSelect.value } }
+                    : true,
             };
 
             const newStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -345,7 +367,9 @@
             }
 
             activeStream = newStream;
+            activeStream = newStream;
             setPreview(activeStream);
+            initVolumeMeter(activeStream); // Initialize visualizer
             btnStartStream.disabled = false;
 
             if (wasStreaming) {
@@ -599,6 +623,17 @@
         }
         mp4SourceVideo.pause();
         mp4SourceVideo.src = '';
+
+        // Stop Volume Meter
+        if (volumeInterval) {
+            clearInterval(volumeInterval);
+            volumeInterval = null;
+        }
+        if (audioContext) {
+            audioContext.close().catch(() => { });
+            audioContext = null;
+        }
+        volumeBar.style.width = '0%';
     }
 
     function stopCurrentStream() {
@@ -682,6 +717,57 @@
         localStorage.removeItem('streamvibe_username');
         window.location.href = '/';
     });
+
+    function initVolumeMeter(stream) {
+        // Ensure AudioContext
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+
+        // Resume if suspended
+        if (audioContext.state === 'suspended') {
+            audioContext.resume();
+        }
+
+        // Close old microphone stream if exists to avoid leak
+        if (microphone) {
+            // disconnect? usually simple GC handles it if we overwrite, but explicit disconnect is good
+            // microphone.disconnect(); 
+        }
+
+        microphone = audioContext.createMediaStreamSource(stream);
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 256;
+        microphone.connect(analyser);
+
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        if (volumeInterval) clearInterval(volumeInterval);
+
+        volumeInterval = setInterval(() => {
+            analyser.getByteFrequencyData(dataArray);
+
+            // Calculate average volume
+            let sum = 0;
+            for (let i = 0; i < bufferLength; i++) {
+                sum += dataArray[i];
+            }
+            let average = sum / bufferLength;
+
+            // Scale to 0-100%
+            // Average usually 0-128 range roughly, but can be up to 255
+            let level = Math.min(100, (average / 128) * 100 * 2); // Amplified a bit
+
+            volumeBar.style.width = `${level}%`;
+
+            // Color feedback
+            if (level > 80) volumeBar.style.backgroundColor = 'red';
+            else if (level > 50) volumeBar.style.backgroundColor = 'yellow';
+            else volumeBar.style.backgroundColor = 'lime';
+
+        }, 100);
+    }
 
     // ── Utilities ──────────────────────────────────────────────
     function escapeHtml(text) {
