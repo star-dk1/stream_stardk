@@ -176,50 +176,55 @@ const io = new Server(server, {
     pingInterval: 25000,
 });
 
-io.on('connection', (socket) => {
+    io.on('connection', (socket) => {
     console.log(`[SOCKET] Conectado: ${socket.id}`);
+
+    // Send immediate status upon connection (before join-stream)
+    socket.emit('stream-status', {
+        isLive: streamState.isLive,
+        adminPeerId: streamState.adminPeerId,
+        title: streamState.title,
+    });
 
     // ── Viewer joins ──
     socket.on('join-stream', (data) => {
         const username = data?.username || `Viewer_${socket.id.slice(0, 5)}`;
-        connectedViewers.set(socket.id, {
-            username,
-            joinedAt: new Date().toISOString(),
-        });
-
-        console.log(`[STREAM] Viewer unido: ${username} (${connectedViewers.size} total)`);
-
-        // Send current stream state
-        socket.emit('stream-status', {
-            isLive: streamState.isLive,
-            adminPeerId: streamState.adminPeerId,
-            title: streamState.title,
-        });
+        
+        // Only count as a viewer if not admin
+        if (data.username !== '🔴 ADMIN') {
+            connectedViewers.set(socket.id, {
+                username,
+                joinedAt: new Date().toISOString(),
+            });
+            console.log(`[STREAM] Viewer unido: ${username} (${connectedViewers.size} total)`);
+            
+            // Notify chat
+            const joinMsg = {
+                id: uuidv4(),
+                type: 'system',
+                text: `${username} se unió al stream`,
+                timestamp: new Date().toISOString(),
+            };
+            addChatMessage(joinMsg);
+            io.emit('chat-message', joinMsg);
+        }
 
         // Send chat history
         socket.emit('chat-history', chatHistory);
 
         // Broadcast updated viewer count
         io.emit('viewer-count', connectedViewers.size);
-
-        // Notify chat
-        const joinMsg = {
-            id: uuidv4(),
-            type: 'system',
-            text: `${username} se unió al stream`,
-            timestamp: new Date().toISOString(),
-        };
-        addChatMessage(joinMsg);
-        io.emit('chat-message', joinMsg);
     });
 
     // ── Chat message ──
     socket.on('chat-message', (data) => {
         const viewer = connectedViewers.get(socket.id);
+        const username = data.isAdmin ? '🔴 ADMIN' : (viewer?.username || data.username || 'Anónimo');
+        
         const message = {
             id: uuidv4(),
             type: data.isAdmin ? 'admin' : 'user',
-            username: data.isAdmin ? '🔴 ADMIN' : (viewer?.username || data.username || 'Anónimo'),
+            username: username,
             text: sanitizeMessage(data.text),
             timestamp: new Date().toISOString(),
         };
@@ -240,9 +245,17 @@ io.on('connection', (socket) => {
         };
 
         console.log(`[STREAM] 🔴 LIVE - PeerId: ${data.peerId}`);
+        // Broadcast to ALL clients
         io.emit('stream-started', {
             adminPeerId: data.peerId,
             title: streamState.title,
+        });
+        
+        // Also emit status update to ensure late joiners get it
+        io.emit('stream-status', {
+             isLive: true,
+             adminPeerId: data.peerId,
+             title: streamState.title
         });
 
         const sysMsg = {
@@ -266,12 +279,17 @@ io.on('connection', (socket) => {
 
         console.log('[STREAM] ⬛ Stream terminado');
         io.emit('stream-ended');
+        io.emit('stream-status', {
+             isLive: false,
+             adminPeerId: null,
+             title: 'Live Stream'
+        });
 
         const sysMsg = {
-            id: uuidv4(),
-            type: 'system',
-            text: '⬛ El stream ha terminado',
-            timestamp: new Date().toISOString(),
+             id: uuidv4(),
+             type: 'system',
+             text: '⬛ El stream ha terminado',
+             timestamp: new Date().toISOString(),
         };
         addChatMessage(sysMsg);
         io.emit('chat-message', sysMsg);
@@ -302,6 +320,8 @@ io.on('connection', (socket) => {
             };
             addChatMessage(leaveMsg);
             io.emit('chat-message', leaveMsg);
+        } else {
+             console.log(`[SOCKET] Desconectado: ${socket.id} (No viewer registered)`);
         }
     });
 });

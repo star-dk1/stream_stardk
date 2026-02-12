@@ -433,10 +433,14 @@
         // Verify peer is ready
         if (!peerReady) {
             showToast('Conectando al servidor PeerJS... intenta de nuevo en unos segundos', 'error');
+            // Try to re-init if stuck
+            initPeer();
             return;
         }
 
         isStreaming = true;
+
+        console.log(`[STREAM] Starting... PeerID: ${ADMIN_PEER_ID}`);
 
         // Notify server — this triggers 'stream-started' event to all viewers
         socket.emit('stream-started', {

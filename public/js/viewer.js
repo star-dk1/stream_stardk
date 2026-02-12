@@ -200,7 +200,10 @@
     }
 
     // ── PeerJS ─────────────────────────────────────────────────
+    // ── PeerJS ─────────────────────────────────────────────────
     function initPeer() {
+        console.log('[PEER] Initializing PeerJS...');
+
         // FIXED: Don't specify port explicitly — let PeerJS use the default
         // On Render (HTTPS/443) or localhost, this auto-resolves correctly
         const peerConfig = {
@@ -213,9 +216,6 @@
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
                     { urls: 'stun:stun1.l.google.com:19302' },
-                    { urls: 'stun:stun2.l.google.com:19302' },
-                    { urls: 'stun:stun3.l.google.com:19302' },
-                    { urls: 'stun:stun4.l.google.com:19302' },
                 ],
             },
         };
@@ -237,20 +237,12 @@
 
         peer.on('error', (err) => {
             console.error('[PEER] Error:', err.type, err);
+            peerReady = false;
+
             if (err.type === 'peer-unavailable') {
-                showToast('Conectando al streamer...', 'error');
-                // Retry after a delay
-                setTimeout(() => {
-                    fetch('/api/stream-status')
-                        .then(r => r.json())
-                        .then(data => {
-                            if (data.isLive && data.adminPeerId) {
-                                connectToPeer(data.adminPeerId);
-                            }
-                        })
-                        .catch(e => console.error('Status fetch error:', e));
-                }, 3000);
-            } else if (err.type === 'network' || err.type === 'server-error') {
+                // Streamer might have disconnected or ID is wrong
+                console.log('[PEER] Streamer unavailable, retrying...');
+            } else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error') {
                 // Reinitialize peer on network errors
                 setTimeout(() => {
                     if (peer && !peer.destroyed) {
@@ -260,6 +252,7 @@
                 }, 3000);
             }
         });
+
 
         peer.on('disconnected', () => {
             console.log('[PEER] Disconnected, reconnecting...');
