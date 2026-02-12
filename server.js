@@ -28,6 +28,7 @@ const peerServer = ExpressPeerServer(server, {
     debug: true,
     path: '/',
     allow_discovery: false,
+    proxied: true, // Required for Render/Heroku behind proxy
 });
 app.use('/peerjs', peerServer);
 
@@ -176,7 +177,7 @@ const io = new Server(server, {
     pingInterval: 25000,
 });
 
-    io.on('connection', (socket) => {
+io.on('connection', (socket) => {
     console.log(`[SOCKET] Conectado: ${socket.id}`);
 
     // Send immediate status upon connection (before join-stream)
@@ -189,7 +190,7 @@ const io = new Server(server, {
     // ── Viewer joins ──
     socket.on('join-stream', (data) => {
         const username = data?.username || `Viewer_${socket.id.slice(0, 5)}`;
-        
+
         // Only count as a viewer if not admin
         if (data.username !== '🔴 ADMIN') {
             connectedViewers.set(socket.id, {
@@ -197,7 +198,7 @@ const io = new Server(server, {
                 joinedAt: new Date().toISOString(),
             });
             console.log(`[STREAM] Viewer unido: ${username} (${connectedViewers.size} total)`);
-            
+
             // Notify chat
             const joinMsg = {
                 id: uuidv4(),
@@ -220,7 +221,7 @@ const io = new Server(server, {
     socket.on('chat-message', (data) => {
         const viewer = connectedViewers.get(socket.id);
         const username = data.isAdmin ? '🔴 ADMIN' : (viewer?.username || data.username || 'Anónimo');
-        
+
         const message = {
             id: uuidv4(),
             type: data.isAdmin ? 'admin' : 'user',
@@ -250,12 +251,12 @@ const io = new Server(server, {
             adminPeerId: data.peerId,
             title: streamState.title,
         });
-        
+
         // Also emit status update to ensure late joiners get it
         io.emit('stream-status', {
-             isLive: true,
-             adminPeerId: data.peerId,
-             title: streamState.title
+            isLive: true,
+            adminPeerId: data.peerId,
+            title: streamState.title
         });
 
         const sysMsg = {
@@ -280,16 +281,16 @@ const io = new Server(server, {
         console.log('[STREAM] ⬛ Stream terminado');
         io.emit('stream-ended');
         io.emit('stream-status', {
-             isLive: false,
-             adminPeerId: null,
-             title: 'Live Stream'
+            isLive: false,
+            adminPeerId: null,
+            title: 'Live Stream'
         });
 
         const sysMsg = {
-             id: uuidv4(),
-             type: 'system',
-             text: '⬛ El stream ha terminado',
-             timestamp: new Date().toISOString(),
+            id: uuidv4(),
+            type: 'system',
+            text: '⬛ El stream ha terminado',
+            timestamp: new Date().toISOString(),
         };
         addChatMessage(sysMsg);
         io.emit('chat-message', sysMsg);
@@ -321,7 +322,7 @@ const io = new Server(server, {
             addChatMessage(leaveMsg);
             io.emit('chat-message', leaveMsg);
         } else {
-             console.log(`[SOCKET] Desconectado: ${socket.id} (No viewer registered)`);
+            console.log(`[SOCKET] Desconectado: ${socket.id} (No viewer registered)`);
         }
     });
 });
