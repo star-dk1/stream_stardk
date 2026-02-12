@@ -1,5 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════
    Admin.js — Camera/Screen/MP4 Streaming + PeerJS + Socket.IO
+   FIXED: PeerJS peer readiness, stream serving, connection handling
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -8,6 +9,7 @@
     // ── State ──────────────────────────────────────────────────
     let socket = null;
     let peer = null;
+    let peerReady = false;
     let activeStream = null;
     let isStreaming = false;
     let currentSource = 'camera'; // camera | screen | video
@@ -15,9 +17,7 @@
     let mp4AnimFrame = null;
     let mp4AudioCtx = null;
     let adminUsername = '';
-
-    // ── Constants ──────────────────────────────────────────────
-    const ADMIN_PEER_ID = 'streamvibe-admin-' + generateShortId();
+    let ADMIN_PEER_ID = '';
 
     // ── DOM ────────────────────────────────────────────────────
     const loadingOverlay = document.getElementById('loading-overlay');
@@ -38,9 +38,6 @@
 
     // Source tabs
     const sourceTabs = document.querySelectorAll('.source-tab');
-    const tabCamera = document.getElementById('tab-camera');
-    const tabScreen = document.getElementById('tab-screen');
-    const tabVideo = document.getElementById('tab-video');
 
     // Source panels
     const panelCamera = document.getElementById('panel-camera');
@@ -84,6 +81,9 @@
             adminUsername = data.user.username;
             adminGreeting.textContent = `Hola, ${adminUsername} 👋`;
 
+            // Generate a stable peer ID based on username
+            ADMIN_PEER_ID = 'streamvibe-admin-' + adminUsername.toLowerCase();
+
             // Hide loading, init
             loadingOverlay.style.display = 'none';
             initSocket();
@@ -99,13 +99,18 @@
     function initSocket() {
         socket = io({
             transports: ['websocket', 'polling'],
-            reconnectionAttempts: 10,
-            reconnectionDelay: 2000,
+            reconnectionAttempts: Infinity,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
         });
 
         socket.on('connect', () => {
             console.log('[SOCKET] Admin connected:', socket.id);
             socket.emit('join-stream', { username: '🔴 ADMIN' });
+            // Enable chat on connect
+            chatInput.disabled = false;
+            chatSend.disabled = false;
+            chatInput.placeholder = 'Mensaje como ADMIN...';
         });
 
         socket.on('viewer-count', (count) => {
@@ -124,14 +129,32 @@
 
         socket.on('disconnect', () => {
             console.log('[SOCKET] Disconnected');
+            chatInput.placeholder = '⚠️ Reconectando...';
+        });
+
+        socket.on('reconnect', () => {
+            console.log('[SOCKET] Reconnected');
+            socket.emit('join-stream', { username: '🔴 ADMIN' });
+            // Re-announce stream if it was live
+            if (isStreaming && ADMIN_PEER_ID) {
+                socket.emit('stream-started', {
+                    peerId: ADMIN_PEER_ID,
+                    title: streamTitleInput.value || 'Live Stream',
+                });
+            }
         });
     }
 
     // ── PeerJS ─────────────────────────────────────────────────
     function initPeer() {
+        // Destroy old peer if exists
+        if (peer && !peer.destroyed) {
+            peer.destroy();
+        }
+
         const peerConfig = {
             host: window.location.hostname,
-            port: window.location.port || (window.location.protocol === 'https:' ? 443 : 80),
+            port: window.location.port ? parseInt(window.location.port) : (window.location.protocol === 'https:' ? 443 : 80),
             path: '/peerjs',
             secure: window.location.protocol === 'https:',
             debug: 1,
@@ -147,52 +170,73 @@
         };
 
         peer = new Peer(ADMIN_PEER_ID, peerConfig);
+        peerReady = false;
 
         peer.on('open', (id) => {
-            console.log('[PEER] Admin Peer ID:', id);
+            console.log('[PEER] ✅ Admin Peer OPEN. ID:', id);
+            peerReady = true;
         });
 
         // When a viewer calls us, answer with our active stream
         peer.on('call', (call) => {
-            console.log('[PEER] Incoming call from:', call.peer);
+            console.log('[PEER] 📞 Incoming call from:', call.peer);
 
             if (isStreaming && activeStream) {
-                call.answer(activeStream);
-                activePeerCalls.set(call.peer, call);
+                // Verify stream has live tracks
+                const liveTracks = activeStream.getTracks().filter(t => t.readyState === 'live');
+                console.log('[PEER] Answering with', liveTracks.length, 'live tracks');
 
-                call.on('close', () => {
-                    console.log('[PEER] Call closed:', call.peer);
-                    activePeerCalls.delete(call.peer);
-                });
+                if (liveTracks.length > 0) {
+                    call.answer(activeStream);
+                    activePeerCalls.set(call.peer, call);
 
-                call.on('error', (err) => {
-                    console.error('[PEER] Call error:', call.peer, err);
-                    activePeerCalls.delete(call.peer);
-                });
+                    call.on('close', () => {
+                        console.log('[PEER] Call closed:', call.peer);
+                        activePeerCalls.delete(call.peer);
+                    });
+
+                    call.on('error', (err) => {
+                        console.error('[PEER] Call error:', call.peer, err);
+                        activePeerCalls.delete(call.peer);
+                    });
+                } else {
+                    console.warn('[PEER] No live tracks, rejecting call');
+                    call.close();
+                }
             } else {
-                console.log('[PEER] Not streaming, ignoring call from:', call.peer);
-                call.close();
+                console.log('[PEER] Not streaming, rejecting call from:', call.peer);
+                // Answer with nothing so the viewer's call.on('stream') doesn't hang
+                try { call.close(); } catch (e) { }
             }
         });
 
         peer.on('error', (err) => {
-            console.error('[PEER] Error:', err);
+            console.error('[PEER] Error:', err.type, err);
+            peerReady = false;
             if (err.type === 'unavailable-id') {
-                showToast('ID de peer ya en uso. Regenerando...', 'error');
-                setTimeout(() => {
-                    if (peer) peer.destroy();
-                    initPeer();
-                }, 2000);
+                showToast('Peer ID en uso. Reintentando con nuevo ID...', 'error');
+                ADMIN_PEER_ID = 'streamvibe-admin-' + adminUsername.toLowerCase() + '-' + Date.now().toString(36);
+                setTimeout(() => initPeer(), 2000);
+            } else if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error') {
+                setTimeout(() => initPeer(), 3000);
             }
         });
 
         peer.on('disconnected', () => {
             console.log('[PEER] Disconnected, reconnecting...');
+            peerReady = false;
             setTimeout(() => {
                 if (peer && !peer.destroyed) {
                     peer.reconnect();
+                } else {
+                    initPeer();
                 }
             }, 2000);
+        });
+
+        peer.on('close', () => {
+            console.log('[PEER] Closed');
+            peerReady = false;
         });
     }
 
@@ -233,7 +277,6 @@
 
     async function loadCameraDevices() {
         try {
-            // Request permission first to get device labels
             const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             tempStream.getTracks().forEach(t => t.stop());
 
@@ -380,9 +423,22 @@
     function startStream() {
         if (!activeStream || isStreaming) return;
 
+        // Verify we have live tracks
+        const liveTracks = activeStream.getTracks().filter(t => t.readyState === 'live');
+        if (liveTracks.length === 0) {
+            showToast('Error: la fuente de video no está activa', 'error');
+            return;
+        }
+
+        // Verify peer is ready
+        if (!peerReady) {
+            showToast('Conectando al servidor PeerJS... intenta de nuevo en unos segundos', 'error');
+            return;
+        }
+
         isStreaming = true;
 
-        // Notify server
+        // Notify server — this triggers 'stream-started' event to all viewers
         socket.emit('stream-started', {
             peerId: ADMIN_PEER_ID,
             title: streamTitleInput.value || 'Live Stream',
@@ -395,18 +451,18 @@
         streamStatusBadge.className = 'live-badge';
         streamStatusBadge.innerHTML = '<span class="dot"></span> LIVE';
         statusBar.className = 'status-bar live';
-        statusBar.innerHTML = '🔴 Transmitiendo en vivo — ' + activeStream.getTracks().length + ' tracks activos';
+        statusBar.innerHTML = `🔴 Transmitiendo en vivo — ${liveTracks.length} track(s) — Peer: ${ADMIN_PEER_ID}`;
 
         showToast('🔴 ¡Stream iniciado!', 'success');
-        console.log('[STREAM] Started with peer:', ADMIN_PEER_ID);
+        console.log('[STREAM] ✅ Started. PeerID:', ADMIN_PEER_ID, 'Tracks:', liveTracks.length);
     }
 
     function stopStream() {
         isStreaming = false;
 
         // Close all peer calls
-        activePeerCalls.forEach((call) => {
-            call.close();
+        activePeerCalls.forEach((call, peerId) => {
+            try { call.close(); } catch (e) { }
         });
         activePeerCalls.clear();
 
@@ -415,7 +471,7 @@
             socket.emit('stream-ended');
         }
 
-        // Stop media
+        // Stop media tracks
         stopCurrentStream();
 
         // Update UI
@@ -463,24 +519,6 @@
         mp4SourceVideo.src = '';
     }
 
-    function replaceStreamForExistingCalls(newStream) {
-        activePeerCalls.forEach((call, peerId) => {
-            try {
-                const senders = call.peerConnection.getSenders();
-                const newTracks = newStream.getTracks();
-
-                senders.forEach((sender) => {
-                    const newTrack = newTracks.find(t => t.kind === sender.track?.kind);
-                    if (newTrack) {
-                        sender.replaceTrack(newTrack);
-                    }
-                });
-            } catch (err) {
-                console.warn('[PEER] Could not replace track for:', peerId, err);
-            }
-        });
-    }
-
     // ── Chat ───────────────────────────────────────────────────
     chatSend.addEventListener('click', sendAdminMessage);
     chatInput.addEventListener('keydown', (e) => {
@@ -492,7 +530,13 @@
 
     function sendAdminMessage() {
         const text = chatInput.value.trim();
-        if (!text || !socket || !socket.connected) return;
+        if (!text) return;
+
+        // Check socket connection directly
+        if (!socket || !socket.connected) {
+            showToast('⚠️ Chat desconectado, reconectando...', 'error');
+            return;
+        }
 
         socket.emit('chat-message', {
             text,
@@ -505,6 +549,9 @@
     }
 
     function addChatMessage(msg) {
+        // Auto-scroll only if user is near the bottom (Twitch behavior)
+        const isNearBottom = chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight < 80;
+
         const div = document.createElement('div');
         div.className = `chat-message ${msg.type}`;
 
@@ -515,7 +562,15 @@
         }
 
         chatMessages.appendChild(div);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+
+        // Limit DOM messages to 200 (performance)
+        while (chatMessages.children.length > 200) {
+            chatMessages.removeChild(chatMessages.firstChild);
+        }
+
+        if (isNearBottom) {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
     }
 
     // ── Stream Title ───────────────────────────────────────────
@@ -537,10 +592,6 @@
     });
 
     // ── Utilities ──────────────────────────────────────────────
-    function generateShortId() {
-        return Math.random().toString(36).substring(2, 8);
-    }
-
     function escapeHtml(text) {
         const div = document.createElement('div');
         div.textContent = text;

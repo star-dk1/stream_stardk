@@ -43,6 +43,25 @@ const connectedViewers = new Map(); // socketId -> { username, joinedAt }
 const chatHistory = []; // last 50 messages
 const MAX_CHAT_HISTORY = 50;
 
+// ─── Pre-seed Default Admin ────────────────────────────────────
+async function seedDefaultAdmin() {
+    try {
+        const defaultUser = process.env.DEFAULT_ADMIN_USER || 'stardk';
+        const defaultPass = process.env.DEFAULT_ADMIN_PASS || 'estrella1';
+
+        if (!admins.has(defaultUser.toLowerCase())) {
+            const salt = await bcrypt.genSalt(12);
+            const passwordHash = await bcrypt.hash(defaultPass, salt);
+            const id = uuidv4();
+            admins.set(defaultUser.toLowerCase(), { id, username: defaultUser, passwordHash });
+            console.log(`[AUTH] ✅ Admin pre-configurado: ${defaultUser}`);
+        }
+    } catch (err) {
+        console.error('[AUTH] Error al crear admin por defecto:', err);
+    }
+}
+seedDefaultAdmin();
+
 // ─── Auth Middleware ───────────────────────────────────────────
 function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];

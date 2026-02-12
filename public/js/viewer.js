@@ -1,5 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════
    Viewer.js — PeerJS stream reception + Socket.IO chat
+   FIXED: autoplay, PeerJS port, dummy stream, volume controls
    ═══════════════════════════════════════════════════════════════ */
 
 (function () {
@@ -8,9 +9,12 @@
     // ── State ──────────────────────────────────────────────────
     let socket = null;
     let peer = null;
+    let peerReady = false;
     let currentCall = null;
     let viewerUsername = '';
     let isConnected = false;
+    let pendingAdminPeerId = null; // store peerId if peer isn't ready yet
+    let isMuted = true; // start muted for autoplay compliance
 
     // ── DOM ────────────────────────────────────────────────────
     const usernameModal = document.getElementById('username-modal');
@@ -18,6 +22,12 @@
     const usernameInput = document.getElementById('viewer-username');
     const remoteVideo = document.getElementById('remote-video');
     const videoOverlay = document.getElementById('video-overlay');
+    const videoControls = document.getElementById('video-controls');
+    const btnUnmute = document.getElementById('btn-unmute');
+    const volumeSliderWrap = document.getElementById('volume-slider-wrap');
+    const volumeSlider = document.getElementById('volume-slider');
+    const volumeLevel = document.getElementById('volume-level');
+    const btnMuteToggle = document.getElementById('btn-mute-toggle');
     const streamBadge = document.getElementById('stream-badge');
     const streamBadge2 = document.getElementById('stream-badge-2');
     const viewerCountNum = document.getElementById('viewer-count-num');
@@ -26,6 +36,55 @@
     const chatMessages = document.getElementById('chat-messages');
     const chatInput = document.getElementById('chat-input');
     const chatSend = document.getElementById('chat-send');
+
+    // ── Volume Controls ────────────────────────────────────────
+
+    // Big "Activate Sound" button (shows on first stream)
+    btnUnmute.addEventListener('click', () => {
+        remoteVideo.muted = false;
+        remoteVideo.volume = 1;
+        isMuted = false;
+        btnUnmute.style.display = 'none';
+        volumeSliderWrap.style.display = 'flex';
+        btnMuteToggle.style.display = 'inline-flex';
+        btnMuteToggle.textContent = '🔊 Sonido ON';
+        volumeSlider.value = 100;
+        volumeLevel.textContent = '100%';
+        // Try playing again after user interaction
+        remoteVideo.play().catch(e => console.warn('Play after unmute:', e));
+    });
+
+    // Small mute toggle in info bar
+    btnMuteToggle.addEventListener('click', () => {
+        if (isMuted) {
+            remoteVideo.muted = false;
+            remoteVideo.volume = volumeSlider.value / 100;
+            isMuted = false;
+            btnMuteToggle.textContent = '🔊 Sonido ON';
+            btnUnmute.style.display = 'none';
+            volumeSliderWrap.style.display = 'flex';
+        } else {
+            remoteVideo.muted = true;
+            isMuted = true;
+            btnMuteToggle.textContent = '🔇 Sonido OFF';
+        }
+    });
+
+    // Volume slider
+    volumeSlider.addEventListener('input', () => {
+        const vol = volumeSlider.value / 100;
+        remoteVideo.volume = vol;
+        volumeLevel.textContent = volumeSlider.value + '%';
+        if (vol === 0) {
+            remoteVideo.muted = true;
+            isMuted = true;
+            btnMuteToggle.textContent = '🔇 Sonido OFF';
+        } else if (isMuted) {
+            remoteVideo.muted = false;
+            isMuted = false;
+            btnMuteToggle.textContent = '🔊 Sonido ON';
+        }
+    });
 
     // ── Check saved username ───────────────────────────────────
     const savedUsername = localStorage.getItem('streamvibe_viewer_name');
@@ -52,54 +111,60 @@
         initSocket();
         initPeer();
         enableChat();
+        updateChatStatus('connecting');
     }
 
     // ── Socket.IO ──────────────────────────────────────────────
     function initSocket() {
         socket = io({
             transports: ['websocket', 'polling'],
-            reconnectionAttempts: 10,
-            reconnectionDelay: 2000,
+            reconnectionAttempts: Infinity,
+            reconnectionDelay: 1000,
+            reconnectionDelayMax: 5000,
         });
 
         socket.on('connect', () => {
             console.log('[SOCKET] Connected:', socket.id);
             isConnected = true;
+            updateChatStatus('connected');
             socket.emit('join-stream', { username: viewerUsername });
         });
 
         socket.on('disconnect', () => {
             console.log('[SOCKET] Disconnected');
             isConnected = false;
+            updateChatStatus('disconnected');
         });
 
         socket.on('reconnect', () => {
             console.log('[SOCKET] Reconnected');
+            isConnected = true;
+            updateChatStatus('connected');
             socket.emit('join-stream', { username: viewerUsername });
         });
 
-        // Stream status on join
+        // Stream status on join — server sends current state immediately
         socket.on('stream-status', (data) => {
-            console.log('[STREAM] Status:', data);
+            console.log('[STREAM] Status received:', data);
             if (data.isLive && data.adminPeerId) {
                 setLiveState(data.title || 'Live Stream');
-                connectToPeer(data.adminPeerId);
+                tryConnectToPeer(data.adminPeerId);
             } else {
                 setOfflineState();
             }
         });
 
-        // Stream started
+        // Stream started — admin just went live (no reload needed!)
         socket.on('stream-started', (data) => {
-            console.log('[STREAM] Started! PeerId:', data.adminPeerId);
+            console.log('[STREAM] 🔴 Started! PeerId:', data.adminPeerId);
             showToast('🔴 ¡El stream ha comenzado!', 'success');
             setLiveState(data.title || 'Live Stream');
-            connectToPeer(data.adminPeerId);
+            tryConnectToPeer(data.adminPeerId);
         });
 
         // Stream ended
         socket.on('stream-ended', () => {
-            console.log('[STREAM] Ended');
+            console.log('[STREAM] ⬛ Ended');
             showToast('⬛ El stream ha terminado', 'error');
             setOfflineState();
             if (currentCall) {
@@ -107,6 +172,8 @@
                 currentCall = null;
             }
             remoteVideo.srcObject = null;
+            videoControls.style.display = 'none';
+            btnMuteToggle.style.display = 'none';
         });
 
         // Viewer count
@@ -134,9 +201,11 @@
 
     // ── PeerJS ─────────────────────────────────────────────────
     function initPeer() {
+        // FIXED: Don't specify port explicitly — let PeerJS use the default
+        // On Render (HTTPS/443) or localhost, this auto-resolves correctly
         const peerConfig = {
             host: window.location.hostname,
-            port: window.location.port || (window.location.protocol === 'https:' ? 443 : 80),
+            port: window.location.port ? parseInt(window.location.port) : (window.location.protocol === 'https:' ? 443 : 80),
             path: '/peerjs',
             secure: window.location.protocol === 'https:',
             debug: 1,
@@ -152,43 +221,84 @@
         };
 
         peer = new Peer(undefined, peerConfig);
+        peerReady = false;
 
         peer.on('open', (id) => {
             console.log('[PEER] My ID:', id);
+            peerReady = true;
+
+            // If we received a stream-started event before peer was ready, connect now
+            if (pendingAdminPeerId) {
+                console.log('[PEER] Connecting to pending admin:', pendingAdminPeerId);
+                connectToPeer(pendingAdminPeerId);
+                pendingAdminPeerId = null;
+            }
         });
 
         peer.on('error', (err) => {
-            console.error('[PEER] Error:', err);
+            console.error('[PEER] Error:', err.type, err);
             if (err.type === 'peer-unavailable') {
-                showToast('El streamer no está disponible. Reintentando...', 'error');
+                showToast('Conectando al streamer...', 'error');
+                // Retry after a delay
                 setTimeout(() => {
-                    const statusCheck = fetch('/api/stream-status')
+                    fetch('/api/stream-status')
                         .then(r => r.json())
                         .then(data => {
                             if (data.isLive && data.adminPeerId) {
                                 connectToPeer(data.adminPeerId);
                             }
-                        });
+                        })
+                        .catch(e => console.error('Status fetch error:', e));
+                }, 3000);
+            } else if (err.type === 'network' || err.type === 'server-error') {
+                // Reinitialize peer on network errors
+                setTimeout(() => {
+                    if (peer && !peer.destroyed) {
+                        peer.destroy();
+                    }
+                    initPeer();
                 }, 3000);
             }
         });
 
         peer.on('disconnected', () => {
             console.log('[PEER] Disconnected, reconnecting...');
+            peerReady = false;
             setTimeout(() => {
                 if (peer && !peer.destroyed) {
                     peer.reconnect();
                 }
             }, 2000);
         });
+
+        peer.on('close', () => {
+            console.log('[PEER] Closed');
+            peerReady = false;
+        });
+    }
+
+    // ── Try connect (waits for peer if needed) ─────────────────
+    function tryConnectToPeer(adminPeerId) {
+        if (peerReady) {
+            connectToPeer(adminPeerId);
+        } else {
+            console.log('[PEER] Not ready yet, queuing connection to:', adminPeerId);
+            pendingAdminPeerId = adminPeerId;
+        }
     }
 
     // ── Connect to admin peer ─────────────────────────────────
     function connectToPeer(adminPeerId) {
         if (!peer || peer.destroyed) {
-            console.warn('[PEER] Not ready, reinitializing...');
+            console.warn('[PEER] Destroyed, reinitializing...');
+            pendingAdminPeerId = adminPeerId;
             initPeer();
-            setTimeout(() => connectToPeer(adminPeerId), 1500);
+            return;
+        }
+
+        if (!peerReady) {
+            console.warn('[PEER] Not open, queuing...');
+            pendingAdminPeerId = adminPeerId;
             return;
         }
 
@@ -200,13 +310,13 @@
 
         console.log('[PEER] Calling admin:', adminPeerId);
 
-        // Create a silent dummy stream to initiate the call
-        // The admin will respond with their real stream
-        const dummyStream = createSilentStream();
+        // FIXED: Use a minimal canvas-only dummy stream (no AudioContext needed)
+        // This avoids AudioContext suspension issues in browsers
+        const dummyStream = createDummyStream();
         const call = peer.call(adminPeerId, dummyStream);
 
         if (!call) {
-            console.error('[PEER] Call failed, retrying in 3s...');
+            console.error('[PEER] Call returned null, retrying in 3s...');
             setTimeout(() => connectToPeer(adminPeerId), 3000);
             return;
         }
@@ -214,10 +324,44 @@
         currentCall = call;
 
         call.on('stream', (remoteStream) => {
-            console.log('[PEER] Receiving stream!', remoteStream.getTracks());
+            console.log('[PEER] ✅ Receiving stream!', remoteStream.getTracks().map(t => t.kind + ':' + t.readyState));
+
             remoteVideo.srcObject = remoteStream;
-            remoteVideo.play().catch(e => console.warn('Autoplay blocked:', e));
-            videoOverlay.classList.add('hidden');
+
+            // Video starts muted (autoplay OK), show unmute button
+            remoteVideo.muted = true;
+            isMuted = true;
+
+            remoteVideo.play()
+                .then(() => {
+                    console.log('[VIDEO] Playing successfully (muted)');
+                    videoOverlay.classList.add('hidden');
+                    videoControls.style.display = 'flex';
+                    btnUnmute.style.display = 'flex';
+                    btnMuteToggle.style.display = 'inline-flex';
+                    btnMuteToggle.textContent = '🔇 Sonido OFF';
+                    volumeSliderWrap.style.display = 'none';
+                })
+                .catch(e => {
+                    console.warn('[VIDEO] Autoplay failed even muted:', e);
+                    // Last resort: show a click-to-play overlay
+                    videoOverlay.innerHTML = `
+            <div class="offline-icon" style="cursor:pointer;" id="click-to-play">▶️</div>
+            <div class="offline-text">Haz clic para ver el stream</div>
+          `;
+                    document.getElementById('click-to-play').addEventListener('click', () => {
+                        remoteVideo.play();
+                        videoOverlay.classList.add('hidden');
+                        videoControls.style.display = 'flex';
+                    });
+                });
+
+            // Monitor track state
+            remoteStream.getTracks().forEach(track => {
+                track.onended = () => {
+                    console.log('[PEER] Track ended:', track.kind);
+                };
+            });
         });
 
         call.on('close', () => {
@@ -228,36 +372,50 @@
         call.on('error', (err) => {
             console.error('[PEER] Call error:', err);
             currentCall = null;
+            // Retry connection
+            setTimeout(() => {
+                fetch('/api/stream-status')
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.isLive && data.adminPeerId) {
+                            connectToPeer(data.adminPeerId);
+                        }
+                    })
+                    .catch(() => { });
+            }, 3000);
         });
     }
 
-    // ── Create silent dummy stream ─────────────────────────────
-    function createSilentStream() {
-        const ctx = new AudioContext();
-        const oscillator = ctx.createOscillator();
-        const dst = ctx.createMediaStreamDestination();
-        oscillator.connect(dst);
-        oscillator.start();
-
+    // ── Create dummy stream (canvas only, no AudioContext) ─────
+    function createDummyStream() {
+        // Simple canvas stream — no AudioContext needed, avoids suspension
         const canvas = document.createElement('canvas');
-        canvas.width = 1;
-        canvas.height = 1;
-        const canvasStream = canvas.captureStream(1);
-
-        const stream = new MediaStream();
-        stream.addTrack(canvasStream.getVideoTracks()[0]);
-        stream.addTrack(dst.stream.getAudioTracks()[0]);
-
-        // Stop oscillator after a moment
-        setTimeout(() => oscillator.stop(), 100);
-
-        return stream;
+        canvas.width = 2;
+        canvas.height = 2;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, 2, 2);
+        return canvas.captureStream(1);
     }
 
     // ── Chat ───────────────────────────────────────────────────
     function enableChat() {
         chatInput.disabled = false;
         chatSend.disabled = false;
+        chatInput.placeholder = 'Escribe un mensaje...';
+    }
+
+    function updateChatStatus(status) {
+        if (status === 'connected') {
+            chatInput.disabled = false;
+            chatSend.disabled = false;
+            chatInput.placeholder = 'Escribe un mensaje...';
+        } else if (status === 'disconnected') {
+            chatInput.placeholder = '⚠️ Reconectando...';
+            // Don't disable — socket.io will reconnect
+        } else if (status === 'connecting') {
+            chatInput.placeholder = '🔄 Conectando al chat...';
+        }
     }
 
     chatSend.addEventListener('click', sendMessage);
@@ -270,7 +428,13 @@
 
     function sendMessage() {
         const text = chatInput.value.trim();
-        if (!text || !socket || !isConnected) return;
+        if (!text) return;
+
+        // Check socket connection directly (not the flag)
+        if (!socket || !socket.connected) {
+            showToast('⚠️ Reconectando al chat...', 'error');
+            return;
+        }
 
         socket.emit('chat-message', {
             text,
@@ -283,6 +447,9 @@
     }
 
     function addChatMessage(msg) {
+        // Auto-scroll only if user is near the bottom (Twitch behavior)
+        const isNearBottom = chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight < 80;
+
         const div = document.createElement('div');
         div.className = `chat-message ${msg.type}`;
 
@@ -293,7 +460,15 @@
         }
 
         chatMessages.appendChild(div);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+
+        // Limit DOM messages to 200 (performance like Twitch)
+        while (chatMessages.children.length > 200) {
+            chatMessages.removeChild(chatMessages.firstChild);
+        }
+
+        if (isNearBottom) {
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
     }
 
     // ── UI State ───────────────────────────────────────────────
@@ -312,6 +487,13 @@
         streamBadge2.innerHTML = '<span>OFFLINE</span>';
         streamTitle.textContent = 'Stream Offline';
         videoOverlay.classList.remove('hidden');
+        // Restore original overlay content
+        videoOverlay.innerHTML = `
+      <div class="offline-icon">📡</div>
+      <div class="offline-text">Stream Offline</div>
+      <div class="offline-subtext">Esperando a que el administrador inicie la transmisión...</div>
+      <div class="spinner" style="margin-top:20px; opacity:0.3;"></div>
+    `;
     }
 
     // ── Helpers ────────────────────────────────────────────────

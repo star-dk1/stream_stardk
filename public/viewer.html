@@ -60,17 +60,31 @@
         <!-- Video Section -->
         <div class="video-section">
             <div class="video-container">
-                <video id="remote-video" autoplay playsinline></video>
+                <!-- CRITICAL: muted is required for autoplay to work in browsers -->
+                <video id="remote-video" autoplay playsinline muted></video>
                 <div class="video-overlay" id="video-overlay">
                     <div class="offline-icon">📡</div>
                     <div class="offline-text">Stream Offline</div>
                     <div class="offline-subtext">Esperando a que el administrador inicie la transmisión...</div>
                     <div class="spinner" style="margin-top:20px; opacity:0.3;"></div>
                 </div>
+                <!-- Volume / Unmute Button (floating over video) -->
+                <div class="video-controls" id="video-controls" style="display:none;">
+                    <button class="btn-volume" id="btn-unmute" title="Activar sonido">
+                        🔇 Activar Sonido
+                    </button>
+                    <div class="volume-slider-wrap" id="volume-slider-wrap" style="display:none;">
+                        <input type="range" id="volume-slider" class="volume-slider" min="0" max="100" value="100">
+                        <span id="volume-level">100%</span>
+                    </div>
+                </div>
             </div>
             <div class="video-info-bar">
                 <div class="stream-title" id="stream-title">Esperando stream...</div>
                 <div class="stream-meta">
+                    <button class="btn btn-ghost btn-sm" id="btn-mute-toggle" style="display:none;">
+                        🔊 Sonido ON
+                    </button>
                     <div id="stream-badge-2" class="offline-badge">
                         <span>OFFLINE</span>
                     </div>
